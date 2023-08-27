@@ -4,6 +4,7 @@ from pathlib import Path
 from tqdm import tqdm
 import os
 import imageio
+from PIL import Image
 
 import proglog
 proglog.default_bar_logger = lambda *args, **kwargs: proglog.MuteProgressBarLogger()
@@ -98,3 +99,17 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
     os.remove(get_tmp_path(clip_index + 1))
 
     video_reader.close()
+
+def get_arbitrary_image(video_path: Path):
+    """Gets an arbitrary image from a video clip.
+    
+    Current implementation: get the first frame.
+
+    Args:
+        video_path (Path): _description_
+    """
+    
+    with imageio.get_reader(video_path) as reader:
+        frame = next(iter(reader))
+
+    return Image.fromarray(frame)
