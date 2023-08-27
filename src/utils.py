@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Iterable
+from typing import Iterable, List, Collection, Dict
 from pathlib import Path
 from tqdm import tqdm
 import os
@@ -10,6 +10,12 @@ import proglog
 proglog.default_bar_logger = lambda *args, **kwargs: proglog.MuteProgressBarLogger()
 
 from moviepy.video.io.VideoFileClip import VideoFileClip, AudioFileClip
+
+from .data_models import ClipData
+from .models.image_to_text import ImageToTextModelService
+from .models.transcriber import TranscriberModelService
+
+TMP_AUDIO_PATH = 'tmp.mp3'
 
 
 def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
@@ -113,3 +119,49 @@ def get_arbitrary_image(video_path: Path):
         frame = next(iter(reader))
 
     return Image.fromarray(frame)
+
+def generate_clip_data(clip_paths: Collection[Path],
+                       transcriber_class: type,
+                       image_describer_class: type) -> Dict[Path, ClipData]:
+    """Generate ASR audio transcriptions and screenshot descriptions for a set of video clips.
+
+    Args:
+        clip_paths (Collection[Path]): The paths to the video clips.
+        transcriber (type): The class of the model used for audio transcription. MUST be subclass of TranscriberModelService.
+        image_describer (type): The class of the model used for image captioning. MUST be subclass of ImageToTextModelService.
+
+    Returns:
+        Dict[Path, ClipData]: <video_clip_path, clip_data> pairs.
+    """
+    
+    assert issubclass(transcriber_class, TranscriberModelService)
+    assert issubclass(image_describer_class, ImageToTextModelService)
+    
+    # transcription
+    transcriber: TranscriberModelService = transcriber_class()
+    transcriptions = {}
+    for clip_path in clip_paths:
+        VideoFileClip(str(clip_path)).audio.write_audiofile(str(TMP_AUDIO_PATH))
+        transcriptions[clip_path] = transcriber(TMP_AUDIO_PATH)
+    
+    # delete transcriber to free VRAM
+    del transcriber
+
+    # image captioning
+    captioner: ImageToTextModelService = image_describer_class()
+    captions = {}
+    for clip_path in clip_paths:
+        image = get_arbitrary_image(clip_path)
+        captions[clip_path] = captioner(image)
+    
+    # delete image captioner to free VRAM
+    del captioner
+    
+    return {
+        ClipData(
+            video_path=clip_path,
+            audio_transcription_raw=transcriptions[clip_path],
+            screenshot_description=captions[clip_path]
+        ) for clip_path in clip_paths
+    }
+    
