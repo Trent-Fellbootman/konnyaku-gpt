@@ -11,7 +11,7 @@ proglog.default_bar_logger = lambda *args, **kwargs: proglog.MuteProgressBarLogg
 
 from moviepy.video.io.VideoFileClip import VideoFileClip, AudioFileClip
 
-from .data_models import ClipData
+from .data_models import ClipData, ClipsMetadata
 from .models.image_to_text import ImageToTextModelService
 from .models.transcriber import TranscriberModelService
 
@@ -32,6 +32,7 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
             Defaults to 0.1.
     """
     
+    assert not output_dir.exists(), "Output directory already exists!"
     assert rtol >= 0 and rtol <= 1, "rtol must be between 0 and 1!"
     
     def norm(x: np.ndarray):
@@ -67,6 +68,8 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
 
     start_time = 0.5 / fps
     
+    clip_paths: List[Path] = []
+    
     progress = tqdm(video_reader, total=n_frames)
     for frame_idx, frame in enumerate(progress):
         progress.set_description(f'clip {clip_index + 1}')
@@ -82,6 +85,7 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
             current_clip = VideoFileClip(str(get_tmp_path(clip_index + 1)))
             current_clip.audio = audio_clip.subclip(start_time, end_time)
             current_clip.write_videofile(str(get_output_path(clip_index + 1)))
+            clip_paths.append(get_output_path(clip_index + 1))
             os.remove(get_tmp_path(clip_index + 1))
             
             clip_index += 1
@@ -102,17 +106,24 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
     current_clip = VideoFileClip(str(get_tmp_path(clip_index + 1)))
     current_clip.audio = audio_clip.subclip(start_time, end_time)
     current_clip.write_videofile(str(get_output_path(clip_index + 1)))
+    clip_paths.append(get_output_path(clip_index + 1))
     os.remove(get_tmp_path(clip_index + 1))
 
     video_reader.close()
+    
+    with open(output_dir / 'metadata.json', 'x') as f:
+        f.write(ClipsMetadata([str(clip_path.name) for clip_path in clip_paths]).to_json())
 
-def get_arbitrary_image(video_path: Path):
+def get_arbitrary_image(video_path: Path) -> Image.Image:
     """Gets an arbitrary image from a video clip.
     
     Current implementation: get the first frame.
 
     Args:
-        video_path (Path): _description_
+        video_path (Path): The path to the video.
+    
+    Returns:
+        Image.Image: The image.
     """
     
     with imageio.get_reader(video_path) as reader:
