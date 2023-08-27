@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractclassmethod
 
 
 class ModelService(ABC):
@@ -8,6 +8,20 @@ class ModelService(ABC):
     @abstractmethod
     def call(self, *args, **kwargs):
         """Invokes the model service on some inputs.
+        """
+        
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def get_description() -> str:
+        """Returns a description of the model.
+
+        This can include name, limitations, etc.
+        
+        ! Description MAY be multi-line.
+
+        Returns:
+            str: The description.
         """
         
         raise NotImplementedError()
