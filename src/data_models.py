@@ -18,8 +18,11 @@ class JsonSerializable(ABC):
 
 @dataclass
 class ClipData(JsonSerializable):
-    video_path: str
-    audio_transcription_raw: str
+    """`duration` is in seconds.
+    """
+
+    duration: float
+    audio_transcriptions_raw: List[str]
     screenshot_description: str
 
     def to_json(self) -> str:
@@ -28,6 +31,9 @@ class ClipData(JsonSerializable):
     @staticmethod
     def from_json(json_data: str) -> Self:
         return ClipData(**json.loads(json_data))
+    
+    def as_pytree(self) -> Dict[str, float | str]:
+        return self.__dict__
 
 
 @dataclass

@@ -1,10 +1,11 @@
 import numpy as np
-from typing import Iterable, List, Collection, Dict
+from typing import Iterable, List, Collection, Dict, Any, Callable
 from pathlib import Path
 from tqdm import tqdm
 import os
 import imageio
 from PIL import Image
+import json
 
 import proglog
 proglog.default_bar_logger = lambda *args, **kwargs: proglog.MuteProgressBarLogger()
@@ -131,37 +132,40 @@ def get_arbitrary_image(video_path: Path) -> Image.Image:
 
     return Image.fromarray(frame)
 
-def generate_clip_data(clip_paths: Collection[Path],
-                       transcriber_class: type,
-                       image_describer_class: type) -> Dict[Path, ClipData]:
+def generate_clips_data(clip_paths: Collection[Path],
+                       transcriber_instantiator: Any,
+                       image_describer_instantiator: Any) -> Dict[Path, ClipData]:
     """Generate ASR audio transcriptions and screenshot descriptions for a set of video clips.
 
     Args:
         clip_paths (Collection[Path]): The paths to the video clips.
-        transcriber (type): The class of the model used for audio transcription. MUST be subclass of TranscriberModelService.
-        image_describer (type): The class of the model used for image captioning. MUST be subclass of ImageToTextModelService.
+        transcriber_instantiator (Any): The return value of calling this function with no arguments is used as the model for audio transcription.
+            The return value MUST be an instance of TranscriberModelService.
+        image_describer_instantiator (Any): The return value of calling this function with no arguments is used as the model for image captioning.
+            The return value MUST be an instance of ImageToTextModelService.
 
     Returns:
         Dict[Path, ClipData]: <video_clip_path, clip_data> pairs.
     """
     
-    assert issubclass(transcriber_class, TranscriberModelService)
-    assert issubclass(image_describer_class, ImageToTextModelService)
-    
-    # transcription
-    transcriber: TranscriberModelService = transcriber_class()
+    # transcription & durations
+    transcriber: TranscriberModelService = transcriber_instantiator()
     transcriptions = {}
-    for clip_path in clip_paths:
-        VideoFileClip(str(clip_path)).audio.write_audiofile(str(TMP_AUDIO_PATH))
-        transcriptions[clip_path] = transcriber(TMP_AUDIO_PATH)
+    durations = {}
+    
+    for clip_path in tqdm(clip_paths, desc="Generating audio transcriptions..."):
+        clip = VideoFileClip(str(clip_path))
+        clip.audio.write_audiofile(str(TMP_AUDIO_PATH))
+        transcriptions[clip_path] = list(transcriber(TMP_AUDIO_PATH))
+        durations[clip_path] = clip.duration
     
     # delete transcriber to free VRAM
     del transcriber
 
     # image captioning
-    captioner: ImageToTextModelService = image_describer_class()
+    captioner: ImageToTextModelService = image_describer_instantiator()
     captions = {}
-    for clip_path in clip_paths:
+    for clip_path in tqdm(clip_paths, desc="Generating screenshot descriptions..."):
         image = get_arbitrary_image(clip_path)
         captions[clip_path] = captioner(image)
     
@@ -169,10 +173,66 @@ def generate_clip_data(clip_paths: Collection[Path],
     del captioner
     
     return {
-        ClipData(
-            video_path=clip_path,
-            audio_transcription_raw=transcriptions[clip_path],
+        clip_path: ClipData(
+            duration=durations[clip_path],
+            audio_transcriptions_raw=transcriptions[clip_path],
             screenshot_description=captions[clip_path]
         ) for clip_path in clip_paths
     }
+
+def compile_video_for_llm(video_path: Path,
+                          output_dir: Path,
+                          transcriber_instantiator: Callable[[], TranscriberModelService],
+                          image_describer_instantiator: Callable[[], ImageToTextModelService],
+                          rtol: float=0.4) -> None:
+    """Compiles LLM-feedable data from a video. Steps include:
     
+    1. Split the video into clips;
+    2. For each clip, generates an audio transcription and a description of an arbitrarily picked frame from the clip.
+    
+    The output directory hierarchy is as follows:
+    
+    output-root/
+        clips/
+            metadata.json - metadata of the clips
+            1.mp4 - clip 1
+            2.mp4 - clip 2
+            ...
+            
+        clips_data.json - duration, audio transcription and screenshot description for each clip
+
+    Args:
+        video_path (Path): Path to the video.
+        output_dir (Path): Output directory root path.
+        transcriber_instantiator (Callable[[], TranscriberModelService]): The return value is used as the ASR model for audio transcription.
+        image_describer_instantiator (Callable[[], ImageToTextModelService]): The return value is used as the model for image captioning.
+        rtol (float): `rtol` for image splitting.
+    """
+    
+    assert not output_dir.exists(), "Output directory already exists!"
+    
+    output_dir.mkdir()
+    clips_dir = output_dir / 'clips'
+    
+    # split video into clips
+    print(f'Splitting video: {video_path}')
+    split_video(video_path, clips_dir, rtol=rtol)
+    print(f'Video clips saved to {clips_dir}.')
+
+    # ASR & image captioning
+    with open(clips_dir / 'metadata.json', 'r') as f:
+        clip_paths = json.loads(f.read())
+    
+    clip_paths = [(clips_dir / clip_path).absolute().resolve() for clip_path in clip_paths]
+
+    clips_data = generate_clips_data(clip_paths, transcriber_instantiator, image_describer_instantiator)
+
+    # serialize clips data
+    clips_data = [clips_data[clip_path].as_pytree() for clip_path in clip_paths]
+
+    clips_data_path = output_dir / 'clips_data.json'
+    
+    with open(clips_data_path, 'x') as f:
+        f.write(json.dumps(clips_data, indent=4))
+    
+    print(f'ASR outputs & screenshot descriptions saved as {clips_data_path.absolute().resolve()}')
