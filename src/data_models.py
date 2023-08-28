@@ -34,6 +34,10 @@ class ClipData(JsonSerializable):
     
     def as_pytree(self) -> Dict[str, float | str]:
         return self.__dict__
+    
+    @staticmethod
+    def from_pytree(data: Dict[str, float | str]) -> Self:
+        return ClipData(**data)
 
 
 @dataclass

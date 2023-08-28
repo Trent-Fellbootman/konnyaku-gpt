@@ -19,6 +19,7 @@ class BlipLarge(ImageToTextModelService):
         return self.processor.decode(out[0], skip_special_tokens=True)
     
     # override
+    @staticmethod
     def get_description() -> str:
         return \
 """

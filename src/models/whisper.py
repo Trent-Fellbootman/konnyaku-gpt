@@ -31,6 +31,7 @@ class Whisper(TranscriberModelService):
         
         return transcription
     
+    @staticmethod
     def get_description() -> str:
         return \
 """
