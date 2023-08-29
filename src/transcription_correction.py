@@ -34,18 +34,20 @@ class TranscriptionCorrector:
                                target_batch_duration: float,
                                context_pre_batch_duration: float,
                                context_post_batch_duration: float,
-                               video_background: str) -> List[str | None]:
+                               video_background: str,
+                               target_language: str | None=None) -> List[str | None]:
         """Correct the transcriptions for a contiguous set of clips.
 
         Args:
             clips_data (Sequence[ClipData]): The clips data.
-            target_batch_duration (float): The total length of clips which will be corrected on each LLM operation.
+            target_batch_duration (float): The total length (in seconds) of clips which will be corrected on each LLM operation.
                 Except in boundary occasions, the actual length of those clips is guaranteed to be greater than or equal to this argument.
-            context_pre_batch_duration (float): The total length of context clips before target clips on each LLM operation.
+            context_pre_batch_duration (float): The total length (in seconds) of context clips before target clips on each LLM operation.
                 Except in boundary occasions, the actual length of those clips is guaranteed to be greater than or equal to this argument.
-            context_post_batch_duration (float): The total length of context clips after target clips on each LLM operation.
+            context_post_batch_duration (float): The total length (in seconds) of context clips after target clips on each LLM operation.
                 Except in boundary occasions, the actual length of those clips is guaranteed to be greater than or equal to this argument.
             video_background (str): Background information about the video.
+            target_language (str | None): The target language. If it is not None, LLM is instructed to translate the transcriptions to this language.
 
         Returns:
             List[str | None]: The corrected transcriptions.
@@ -84,7 +86,7 @@ class TranscriptionCorrector:
                     break
             
             # correct
-            result = self._correct_clip_transcriptions(context_pre, target_clips, context_post, video_background)
+            result = self._correct_clip_transcriptions(context_pre, target_clips, context_post, video_background, target_language)
             
             # update
             if result is not None:
@@ -94,15 +96,14 @@ class TranscriptionCorrector:
                 transcriptions += [None] * len(target_clips)
                 print(f'Error occurred when correcting transcriptions for clips [{current_start}, {current_start + len(target_clips)})', file=sys.stderr)
                 
-            current_start += len(target_clips)
-
-            print(f'\rFinished clips {current_start + len(target_clips)}/{len(clips_data)}')
-            
             assert current_start + len(target_clips) == len(transcriptions)
+            print(f'\rFinished clips {current_start + len(target_clips)}/{len(clips_data)}')
+
+            current_start += len(target_clips)
         
         return transcriptions
     
-    def _correct_clip_transcriptions(self, context_pre: Sequence[ClipData], targets: Sequence[ClipData], context_post: Sequence[ClipData], video_background: str) -> Dict[int, str] | None:
+    def _correct_clip_transcriptions(self, context_pre: Sequence[ClipData], targets: Sequence[ClipData], context_post: Sequence[ClipData], video_background: str, target_language: str | None=None) -> Dict[int, str] | None:
         """Corrects the transcriptions of the clips in `targets`.
 
         Args:
@@ -110,6 +111,7 @@ class TranscriptionCorrector:
             targets (Sequence[ClipData]): Data about the clips to be transcribed.
             context_post (Sequence[ClipData]): Data about the clips after `targets.
             video_background (str): Background information about the video.
+            target_language (str | None): The target language.
 
         Returns:
             Dict[int, str] | None: The corrected transcriptions.
@@ -121,10 +123,10 @@ class TranscriptionCorrector:
         
         for _ in range(self.max_retry_count):
             try:
-                correction_prompt = self._build_transcription_correction_prompt(context_pre, targets, context_post, video_background)
+                correction_prompt = self._build_transcription_correction_prompt(context_pre, targets, context_post, video_background, target_language)
                 correction_output: str = self.chat_backend([(correction_prompt, True)])
-                formatting_prompt = self._build_transcription_formatting_prompt(correction_output, len(targets))
-                formatting_output: str = self.chat_backend([formatting_prompt])
+                formatting_prompt = self._build_transcription_formatting_prompt(correction_output, len(targets), target_language)
+                formatting_output: str = self.chat_backend([(formatting_prompt, True)])
                 
                 transcriptions: Dict[str, str] = json.loads(formatting_output)
                 
@@ -147,7 +149,8 @@ class TranscriptionCorrector:
         context_pre: Sequence[ClipData],
         targets: Sequence[ClipData],
         context_post: Sequence[ClipData],
-        video_background: str) -> str:
+        video_background: str,
+        target_language: str | None=None) -> str:
         """Builds the prompt used to be fed into an LLM and retrieve corrected transcriptions.
         
         The output of the LLM when fed with the returned value is expected to contain the corrected transcriptions,
@@ -158,6 +161,7 @@ class TranscriptionCorrector:
             targets (Sequence[ClipData]): Data about the clips to be transcribed.
             context_post (Sequence[ClipData]): Data about the clips after `targets.
             video_background (str): Background information about the video.
+            target_language (str | None): The target language.
 
         Returns:
             str: The prompt ready to be fed into an LLM.
@@ -202,6 +206,7 @@ To be more specific, here is a description of the ASR model:
 
 Therefore, I need you to use logical reasoning (and your imagination when information is insufficient) to infer what is going on in the video,
 and then correct the transcriptions so that they look logical and make sense when viewed together.
+{f"I also want you to translate and provide your corrected transcriptions in {target_language}."if target_language is not None else ''}
 
 I splitted the video into many clips and I don't expect you to provide a transcription for all of them all at once.
 For now, you only need to correct the transcription for part of the clips.
@@ -225,7 +230,7 @@ Now, here are the information of the clips (0 indexed, indices correspond to the
 
 {clips_data_part}
 
-Please correct the transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1}.
+Please correct {"and translate " if target_language is not None else ''}the transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1}.
 Although there are likely to be multiple characters speaking, you DO NOT need to separate the speech of each speaker.
 Just provide the audio transcriptions of entire clips.
 
@@ -235,18 +240,23 @@ DO NOT rely on their outputs, as it is YOUR responsibility to understand the vid
 Please use logical reasoning and your imagination to infer (or imagine) what is ACTUALLY going on in the clips,
 and give me the audio transcriptions that seem most REASONABLE and PLAUSIBLE to you.
 
-You should provide YOUR transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1} ONLY.
+Also, make sure to address video-specific terms correctly (if any).
+
+You should provide YOUR {"translated " if target_language is not None else ''}transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1} ONLY and NOTHING ELSE.
 DO NOT include ASR outputs, image-to-text outputs, or information about contextual clips.
 However, please DO indicate the index of the clip that each of your transcriptions corresponds to.
+
+Remember, you should {f"translate the transcriptions into {target_language}." if target_language is not None else "keep the transcriptions in their original language."}
 """
 
 
-    def _build_transcription_formatting_prompt(self, transcription_output: str, n_clips: int) -> str:
+    def _build_transcription_formatting_prompt(self, transcription_output: str, n_clips: int, target_language: str | None) -> str:
         """Builds the prompt used to be fed into an LLM and retrieve corrected, formatted transcriptions.
 
         Args:
             transcription_output (str): LLM's output containing the transcriptions.
             n_clips (int): The (expected) number of clips included in `transcription_output`.
+            target_language (str | None): The target language.
 
         Returns:
             str: The prompt ready to be fed into the LLM.
@@ -260,7 +270,22 @@ The transcriptions in the LLM output are ordered by clip indices (not necessaril
 and I want you to output the a JSON dictionary where the keys are clip indices and the values are the corresponding transcriptions.
 If the transcription of a clip is an empty string, you may either include it (setting the corresponding value to "") in your JSON output or omit it.
 
-For example, if the LLM output is:
+Notice that the clip indices MAY NOT be a list of contiguous numbers.
+
+Now, the LLM output I got is:
+
+{transcription_output}
+
+{
+f'''The LLM should have translated the transcriptions into {target_language}. Please output the TRANSLATIONS instead of the original transcriptions (if they are also provided).
+''' if target_language is not None else
+'''The LLM may have translated the transcriptions, but even if this is the case, please output the transcriptions in their ORIGINAL language.
+'''
+}
+
+Please output the JSON-form transcriptions ONLY and NOTHING ELSE.
+
+As an example, if the LLM output is:
 
     Sure! Here are my transcriptions for clip 15-17:
     
@@ -282,13 +307,4 @@ Then your output should be something like:
         "16": "",
         "110": "blah2\\n\\nblah2\\nblah2"
     }}
-
-Notice that the clip indices MAY NOT be a list of contiguous numbers.
-
-Now, the LLM output I got is:
-
-{transcription_output}
-
-Please output the formatted transcription ONLY and NOTHING ELSE.
-Also, keep the original transcriptions and do not try to correct them even if they seem grammatically incorrect.
 """

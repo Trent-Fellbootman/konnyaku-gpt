@@ -12,8 +12,8 @@ class ModelService(ABC):
         
         raise NotImplementedError()
     
-    @abstractmethod
     @staticmethod
+    @abstractmethod
     def get_description() -> str:
         """Returns a description of the model.
 

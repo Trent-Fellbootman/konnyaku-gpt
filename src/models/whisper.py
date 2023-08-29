@@ -29,7 +29,7 @@ class Whisper(TranscriberModelService):
         # decode token ids to text
         transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True, return_timestampes=True)
         
-        return transcription
+        return '\n'.join(transcription)
     
     @staticmethod
     def get_description() -> str:
