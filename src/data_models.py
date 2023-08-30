@@ -1,4 +1,4 @@
-from typing import Self, Dict, List
+from typing import Self, Dict, List, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -41,16 +41,50 @@ class ClipData(JsonSerializable):
 
 
 @dataclass
-class ClipsMetadata(JsonSerializable):
-    """
-    clip_paths (List[str]): The paths to the output clips. Indices correspond to clip ordering.
-    """
+class ClipMetaData(JsonSerializable):
+    """`clip_range` is in seconds.
     
-    clip_paths: List[str]
+    `index` starts from 0.
+    """
 
+    index: int
+    path: Path
+    clip_range: Tuple[float, float]
+
+    def as_pytree(self) -> str:
+        return {
+            'index': self.index,
+            'path': str(self.path),
+            'clip_range': list(self.clip_range)
+        }
+    
+    @staticmethod
+    def from_pytree(data: Dict) -> Self:
+        return ClipMetaData(
+            index=data['index'],
+            path=Path(data['path']),
+            clip_range=tuple(data['clip_range'])
+        )
+    
     def to_json(self) -> str:
-        return json.dumps(self.clip_paths, indent=4)
+        return json.dumps(self.as_pytree(), indent=4)
     
     @staticmethod
     def from_json(json_data: str) -> Self:
-        return ClipsMetadata(json.loads(json_data))
+        return ClipMetaData.from_pytree(json.loads(json_data))
+    
+    @property
+    def duration(self) -> float:
+        return self.clip_range[1] - self.clip_range[0]
+
+
+@dataclass
+class ClipSetMetadata(JsonSerializable):
+    clips_metadata: List[ClipMetaData]
+
+    def to_json(self) -> str:
+        return json.dumps([item.as_pytree() for item in self.clips_metadata], indent=4)
+    
+    @staticmethod
+    def from_json(json_data: str) -> Self:
+        return ClipSetMetadata([ClipMetaData.from_pytree(item) for item in json.loads(json_data)])

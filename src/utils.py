@@ -1,18 +1,19 @@
 import numpy as np
-from typing import Iterable, List, Collection, Dict, Any, Callable
+from typing import Iterable, List, Collection, Dict, Any, Callable, Tuple
 from pathlib import Path
 from tqdm import tqdm
 import os
 import imageio
 from PIL import Image
 import json
+import shutil
 
 import proglog
 proglog.default_bar_logger = lambda *args, **kwargs: proglog.MuteProgressBarLogger()
 
 from moviepy.video.io.VideoFileClip import VideoFileClip, AudioFileClip
 
-from .data_models import ClipData, ClipsMetadata
+from .data_models import ClipMetaData, ClipSetMetadata
 from .models.image_to_text import ImageToTextModelService
 from .models.transcriber import TranscriberModelService
 
@@ -69,7 +70,7 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
 
     start_time = 0.5 / fps
     
-    clip_paths: List[Path] = []
+    clips_metadata: List[ClipMetaData] = []
     
     progress = tqdm(video_reader, total=n_frames)
     for frame_idx, frame in enumerate(progress):
@@ -86,7 +87,11 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
             current_clip = VideoFileClip(str(get_tmp_path(clip_index + 1)))
             current_clip.audio = audio_clip.subclip(start_time, end_time)
             current_clip.write_videofile(str(get_output_path(clip_index + 1)))
-            clip_paths.append(get_output_path(clip_index + 1))
+            clips_metadata.append(ClipMetaData(
+                index=clip_index,
+                path=get_output_path(clip_index + 1).name,
+                clip_range=(start_time, end_time)
+            ))
             os.remove(get_tmp_path(clip_index + 1))
             
             clip_index += 1
@@ -107,13 +112,17 @@ def split_video(video_path: Path, output_dir: Path, rtol: float=0.2):
     current_clip = VideoFileClip(str(get_tmp_path(clip_index + 1)))
     current_clip.audio = audio_clip.subclip(start_time, end_time)
     current_clip.write_videofile(str(get_output_path(clip_index + 1)))
-    clip_paths.append(get_output_path(clip_index + 1))
+    clips_metadata.append(ClipMetaData(
+        index=clip_index,
+        path=get_output_path(clip_index + 1).name,
+        clip_range=(start_time, end_time)
+    ))
     os.remove(get_tmp_path(clip_index + 1))
 
     video_reader.close()
     
     with open(output_dir / 'metadata.json', 'x') as f:
-        f.write(ClipsMetadata([str(clip_path.name) for clip_path in clip_paths]).to_json())
+        f.write(ClipSetMetadata(clips_metadata).to_json())
 
 def get_arbitrary_image(video_path: Path) -> Image.Image:
     """Gets an arbitrary image from a video clip.
@@ -132,59 +141,98 @@ def get_arbitrary_image(video_path: Path) -> Image.Image:
 
     return Image.fromarray(frame)
 
-def generate_clips_data(clip_paths: Collection[Path],
-                       transcriber_instantiator: Any,
-                       image_describer_instantiator: Any) -> Dict[Path, ClipData]:
-    """Generate ASR audio transcriptions and screenshot descriptions for a set of video clips.
+def transcribe_clips(clips_dir: Path, transcriber: TranscriberModelService, output_filepath: Path, save_every: int=10):
+    try:
+        output_filepath.touch()
+        with open(output_filepath, 'r') as f:
+            transcriptions = json.loads(f.read())
+            
+        assert isinstance(transcriptions, List) and all(isinstance(t, str) for t in transcriptions)
+    except Exception:
+        output_filepath.touch()
+        transcriptions = []
+    
+    with open(clips_dir / 'metadata.json', 'r') as f:
+        clip_paths: List[str] = [str(item.path) for item in ClipSetMetadata.from_json(f.read()).clips_metadata]
+    
+    progress = tqdm(list(enumerate(clip_paths)))
+    
+    def flush():
+        with open(output_filepath, 'w') as f:
+            f.write(json.dumps(transcriptions, indent=4, ensure_ascii=False))
 
-    Args:
-        clip_paths (Collection[Path]): The paths to the video clips.
-        transcriber_instantiator (Any): The return value of calling this function with no arguments is used as the model for audio transcription.
-            The return value MUST be an instance of TranscriberModelService.
-        image_describer_instantiator (Any): The return value of calling this function with no arguments is used as the model for image captioning.
-            The return value MUST be an instance of ImageToTextModelService.
+    for i, clip_path in progress:
+        if i < len(transcriptions):
+            continue
+        
+        with VideoFileClip(str(clips_dir / clip_path)) as clip:
+            clip.audio.write_audiofile(str(TMP_AUDIO_PATH))
+            
+        text = transcriber(TMP_AUDIO_PATH)
+        transcriptions.append(text)
+        progress.set_description(f'clip {i + 1}/{len(clip_paths)}: {text}')
+        
+        if (i + 1) % save_every == 0:
+            flush()
+    
+    flush()
 
-    Returns:
-        Dict[Path, ClipData]: <video_clip_path, clip_data> pairs.
-    """
+def describe_clips_screenshots(clips_dir: Path, captioner: ImageToTextModelService, output_filepath: Path, save_every: int=10):
+    try:
+        output_filepath.touch()
+        with open(output_filepath, 'r') as f:
+            captions = json.loads(f.read())
+            
+        assert isinstance(captions, List) and all(isinstance(t, str) for t in captions)
+    except Exception:
+        captions = []
     
-    # transcription & durations
-    transcriber: TranscriberModelService = transcriber_instantiator()
-    transcriptions = {}
-    durations = {}
+    with open(clips_dir / 'metadata.json', 'r') as f:
+        clip_paths: List[str] = [str(item.path) for item in ClipSetMetadata.from_json(f.read()).clips_metadata]
     
-    for clip_path in tqdm(clip_paths, desc="Generating audio transcriptions..."):
-        clip = VideoFileClip(str(clip_path))
-        clip.audio.write_audiofile(str(TMP_AUDIO_PATH))
-        transcriptions[clip_path] = list(transcriber(TMP_AUDIO_PATH))
-        durations[clip_path] = clip.duration
+    progress = tqdm(list(enumerate(clip_paths)))
     
-    # delete transcriber to free VRAM
-    del transcriber
+    def flush():
+        with open(output_filepath, 'w') as f:
+            f.write(json.dumps(captions, indent=4))
 
-    # image captioning
-    captioner: ImageToTextModelService = image_describer_instantiator()
-    captions = {}
-    for clip_path in tqdm(clip_paths, desc="Generating screenshot descriptions..."):
-        image = get_arbitrary_image(clip_path)
-        captions[clip_path] = captioner(image)
+    for i, clip_path in progress:
+        if i < len(captions):
+            continue
+        
+        image = get_arbitrary_image(clips_dir / clip_path)
+        caption = captioner(image)
+        captions.append(caption)
+        progress.set_description(f'clip {i + 1}/{len(clip_paths)}: {caption}')
+        
+        if (i + 1) % save_every == 0:
+            flush()
     
-    # delete image captioner to free VRAM
-    del captioner
-    
-    return {
-        clip_path: ClipData(
-            duration=durations[clip_path],
-            audio_transcriptions_raw=transcriptions[clip_path],
-            screenshot_description=captions[clip_path]
-        ) for clip_path in clip_paths
-    }
+    flush()
+
+def parse_video_clips(clips_dir: Path,
+                      transcriber_instantiator: Callable[[], TranscriberModelService],
+                      image_describer_instantiator: Callable[[], ImageToTextModelService],
+                      durations_file: Path,
+                      transcriptions_file: Path,
+                      screenshot_descriptions_file: Path,
+                      save_every: int=10):
+    # transcribe clips
+    print('Transcribing clips...')
+    transcriber = transcriber_instantiator()
+    transcribe_clips(clips_dir, transcriber, transcriptions_file, save_every)
+
+    # create screenshot descriptions for clips
+    print('Creating screenshot descriptions for clips...')
+    captioner = image_describer_instantiator()
+    describe_clips_screenshots(clips_dir, captioner, screenshot_descriptions_file, save_every)
 
 def compile_video_for_llm(video_path: Path,
                           output_dir: Path,
                           transcriber_instantiator: Callable[[], TranscriberModelService],
                           image_describer_instantiator: Callable[[], ImageToTextModelService],
-                          rtol: float=0.4) -> None:
+                          rtol: float=0.4,
+                          save_every: int=10) -> None:
     """Compiles LLM-feedable data from a video. Steps include:
     
     1. Split the video into clips;
@@ -200,6 +248,9 @@ def compile_video_for_llm(video_path: Path,
             ...
             
         clips_data.json - duration, audio transcription and screenshot description for each clip
+        durations.json: the durations of the clips
+        transcriptions.json: the transcription of the clips
+        captions.json: the captions of arbitrary screenshots fromthe clips
 
     Args:
         video_path (Path): Path to the video.
@@ -209,30 +260,21 @@ def compile_video_for_llm(video_path: Path,
         rtol (float): `rtol` for image splitting.
     """
     
-    assert not output_dir.exists(), "Output directory already exists!"
+    if not output_dir.exists():
+        output_dir.mkdir()
     
-    output_dir.mkdir()
     clips_dir = output_dir / 'clips'
     
-    # split video into clips
-    print(f'Splitting video: {video_path}')
-    split_video(video_path, clips_dir, rtol=rtol)
-    print(f'Video clips saved to {clips_dir}.')
+    if not (clips_dir.exists() and (clips_dir / 'metadata.json').exists()):
+        if clips_dir.exists():
+            shutil.rmtree(clips_dir)
+
+        # split video into clips
+        print(f'Splitting video: {video_path}')
+        split_video(video_path, clips_dir, rtol=rtol)
+        print(f'Video clips saved to {clips_dir}.')
 
     # ASR & image captioning
-    with open(clips_dir / 'metadata.json', 'r') as f:
-        clip_paths = json.loads(f.read())
-    
-    clip_paths = [(clips_dir / clip_path).absolute().resolve() for clip_path in clip_paths]
-
-    clips_data = generate_clips_data(clip_paths, transcriber_instantiator, image_describer_instantiator)
-
-    # serialize clips data
-    clips_data = [clips_data[clip_path].as_pytree() for clip_path in clip_paths]
-
-    clips_data_path = output_dir / 'clips_data.json'
-    
-    with open(clips_data_path, 'x') as f:
-        f.write(json.dumps(clips_data, indent=4))
-    
-    print(f'ASR outputs & screenshot descriptions saved as {clips_data_path.absolute().resolve()}')
+    parse_video_clips(clips_dir, transcriber_instantiator, image_describer_instantiator,
+                      output_dir / 'durations.json', output_dir / 'transcriptions.json', output_dir / 'captions.json',
+                      save_every=save_every)

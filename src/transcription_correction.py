@@ -12,21 +12,24 @@ class TranscriptionCorrector:
     The intended use is to use one instance of this class for one video.
     """
     
-    def __init__(self, asr_description: str, captioner_description: str, chat_backend: ChatCompletionService,
+    def __init__(self, asr_description: str, captioner_description: str,
+                 chat_backend_corrector: ChatCompletionService, chat_backend_extractor: ChatCompletionService,
                  max_retry_count: int=3):
         """Constructor.
 
         Args:
             asr_description (str): Information about the ASR model used to generate the initial transcriptions.
             captioner_description (str): Information about the image captioning model used to generate descriptions for screenshots of the clips.
-            chat_backend (ChatCompletionService): A model service for chat-completion which will be used to compute corrected transcriptions.
+            chat_backend_corrector (ChatCompletionService): A model service for chat-completion which will be used to compute corrected transcriptions.
+            chat_backend_extractor (ChatCompletionService): A model service for chat-completion which will be used to extract the corrected transcriptions into machine-readable format.
             max_retry_count (int): The maximum number to retry on each group of clips. If reached, the clip group will be skipped and no transcription
                 will be generated for this group.
         """
 
         self.asr_description = asr_description
         self.captioner_description = captioner_description
-        self.chat_backend = chat_backend
+        self.chat_backend_corrector = chat_backend_corrector
+        self.chat_backend_extractor = chat_backend_extractor
         self.max_retry_count = max_retry_count
    
     def correct_transcriptions(self,
@@ -124,9 +127,9 @@ class TranscriptionCorrector:
         for _ in range(self.max_retry_count):
             try:
                 correction_prompt = self._build_transcription_correction_prompt(context_pre, targets, context_post, video_background, target_language)
-                correction_output: str = self.chat_backend([(correction_prompt, True)])
+                correction_output: str = self.chat_backend_corrector([(correction_prompt, True)])
                 formatting_prompt = self._build_transcription_formatting_prompt(correction_output, len(targets), target_language)
-                formatting_output: str = self.chat_backend([(formatting_prompt, True)])
+                formatting_output: str = self.chat_backend_extractor([(formatting_prompt, True)])
                 
                 transcriptions: Dict[str, str] = json.loads(formatting_output)
                 
@@ -169,8 +172,8 @@ class TranscriptionCorrector:
         
         def clip_formatter(data: ClipData, index: int, is_target: bool) -> str:
             headline = f"Clip {index}{' (you need to correct the transcription for this clip)' if is_target else ''}:"
-            asr_part = f"Inaccurate transcription from ASR:\n" + '\n'.join(data.audio_transcriptions_raw)
-            screenshot_part = f"Inaccurate description of an arbitrarily picked frame within the clip:\n" + data.screenshot_description
+            asr_part = f"(Potentially inaccurate) transcription from ASR:\n" + '\n'.join(data.audio_transcriptions_raw)
+            screenshot_part = f"(Potentially inaccurate) description of an arbitrarily picked frame within the clip:\n" + data.screenshot_description
             
             return '\n'.join([headline, asr_part, screenshot_part])
         
@@ -222,11 +225,7 @@ For your reference, here is a description of the image-to-text model:
 
 {self.captioner_description}
 
-Also, you may find the following background information of the video helpful:
-
-{video_background}
-
-Now, here are the information of the clips (0 indexed, indices correspond to the order in which the clips appears in the video):
+Now, here are the information of the clips (0 indexed, indices correspond to the order in which the clips appear in the video):
 
 {clips_data_part}
 
@@ -240,13 +239,23 @@ DO NOT rely on their outputs, as it is YOUR responsibility to understand the vid
 Please use logical reasoning and your imagination to infer (or imagine) what is ACTUALLY going on in the clips,
 and give me the audio transcriptions that seem most REASONABLE and PLAUSIBLE to you.
 
-Also, make sure to address video-specific terms correctly (if any).
+You may find the following background information about the video helpful:
+
+{video_background}
+
+Make sure to look for potential cases where special terms were not correctly identified by the ASR model,
+and address them properly.
 
 You should provide YOUR {"translated " if target_language is not None else ''}transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1} ONLY and NOTHING ELSE.
 DO NOT include ASR outputs, image-to-text outputs, or information about contextual clips.
 However, please DO indicate the index of the clip that each of your transcriptions corresponds to.
 
 Remember, you should {f"translate the transcriptions into {target_language}." if target_language is not None else "keep the transcriptions in their original language."}
+
+You should output transcriptions for all clips I ask you to transcribe even if there are many.
+
+PLEASE MAKE SURE THAT YOUR CORRECTED TRANSCRIPTIONS LOOK NATURAL, MAKE LOGICAL SENSE AND ARE PLAUSIBLE GIVEN THE VIDEO'S BACKGROUND INFORMATION I PROVIDED TO YOU.
+THEY SHOULD NOT LOOK LIKE HUMAN-UNINTELLIGIBLE NONSENSE PRODUCED BY LOW-QUALITY MACHINE TRANSLATION SERVICE.
 """
 
 
