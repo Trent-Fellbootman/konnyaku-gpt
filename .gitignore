@@ -11,3 +11,8 @@
 *.json
 
 *.ipynb
+
+test.*
+tmp
+tmp.*
+tmp[0-9].*

@@ -1,9 +1,10 @@
 import sys
 from typing import Collection, Dict, List, Any, Sequence
 import json
+from pathlib import Path
 
 from .data_models import ClipData
-from .models.chat_llm import ChatCompletionService
+from .models.chat_completion import ChatCompletionService
 
 
 class TranscriptionCorrector:
@@ -34,15 +35,18 @@ class TranscriptionCorrector:
    
     def correct_transcriptions(self,
                                clips_data: Sequence[ClipData],
+                               output_file: Path,
                                target_batch_duration: float,
                                context_pre_batch_duration: float,
                                context_post_batch_duration: float,
                                video_background: str,
-                               target_language: str | None=None) -> List[str | None]:
+                               target_language: str | None=None,
+                               save_every: int=1) -> List[str | None]:
         """Correct the transcriptions for a contiguous set of clips.
 
         Args:
             clips_data (Sequence[ClipData]): The clips data.
+            output_file: The path to the transcription output file.
             target_batch_duration (float): The total length (in seconds) of clips which will be corrected on each LLM operation.
                 Except in boundary occasions, the actual length of those clips is guaranteed to be greater than or equal to this argument.
             context_pre_batch_duration (float): The total length (in seconds) of context clips before target clips on each LLM operation.
@@ -51,14 +55,26 @@ class TranscriptionCorrector:
                 Except in boundary occasions, the actual length of those clips is guaranteed to be greater than or equal to this argument.
             video_background (str): Background information about the video.
             target_language (str | None): The target language. If it is not None, LLM is instructed to translate the transcriptions to this language.
+            save_every (int): The interval (in number of LLM operations) to save the corrected transcriptions.
+                Recommended to set this to 1 if you are correcting a large number of clips with each LLM operation.
 
         Returns:
             List[str | None]: The corrected transcriptions.
                 None elements mean that the corresponding clips has no speech or were skipped.
         """
         
-        current_start = 0
-        transcriptions: List[str] = []
+        output_file.touch()
+        
+        try:
+            with open(output_file, 'r') as f:
+                transcriptions = json.load(f.read())
+            
+            assert isinstance(transcriptions, List) and all(isinstance(t, str) for t in transcriptions)
+        except Exception:
+            transcriptions = []
+
+        current_start = len(transcriptions)
+        operation_index = 0
         
         while current_start < len(clips_data):
             # get context_pre
@@ -103,10 +119,23 @@ class TranscriptionCorrector:
             print(f'\rFinished clips {current_start + len(target_clips)}/{len(clips_data)}')
 
             current_start += len(target_clips)
+            
+            if (operation_index + 1) % save_every == 0:
+                with open(output_file, 'w') as f:
+                    f.write(json.dumps(transcriptions, indent=4, ensure_ascii=False))
+                    
+            operation_index += 1
         
-        return transcriptions
+        with open(output_file, 'w') as f:
+            f.write(json.dumps(transcriptions, indent=4, ensure_ascii=False))
     
-    def _correct_clip_transcriptions(self, context_pre: Sequence[ClipData], targets: Sequence[ClipData], context_post: Sequence[ClipData], video_background: str, target_language: str | None=None) -> Dict[int, str] | None:
+    def _correct_clip_transcriptions(
+        self,
+        context_pre: Sequence[ClipData],
+        targets: Sequence[ClipData],
+        context_post: Sequence[ClipData],
+        video_background: str,
+        target_language: str | None=None) -> Dict[int, str] | None:
         """Corrects the transcriptions of the clips in `targets`.
 
         Args:
@@ -186,78 +215,77 @@ class TranscriptionCorrector:
 
         return \
 f"""I am trying to create subtitles for a video.
-To achive this goal, I split the video into many clips and
-used an Automatic Speech Recognition (ASR) model to transcribe the audio of each clip.
-However, due to the short length of each clip (which means the ASR model is provided almost no conntextual information on each call)
-and the inferior performance of the ASR model, the generated transcriptions are VERY inaccurate.
+I split the video into many clips and used an Automatic Speech Recognition (ASR) model to transcribe the audio of each clip.
+I also selected an arbitrary frame from each clip and used an image-to-text model to create a description for it.
 
-Notice that the video may contain multiple speakers, and some of them may even speak simultaneously.
-Also, the video is splitted with a very simple algorithm.
-As a result, it is usual for one clip to contain multiple sentences spoken by multiple speakers,
-or just an incomplete part of one sentence spoken by one speaker.
-Hence, you should NOT assume that each clip always contains exactly one complete sentence.
-If you think a clip only contains part of a sentence, you should also provide part of the corrected transcription accordingly.
-Additionally, some clips may not contain any speech at all
-(it is also possible that the ASR output is not empty even though the clip contains no speech, so use your discretion).
-
-If you think that a clip does not contain any speech or you really cannot infer a plausible transcription (e.g., when the ASR output is nonsense),
-just omit that clip in your output.
-
-To be more specific, here is a description of the ASR model:
-
-{self.asr_description}
-
-Therefore, I need you to use logical reasoning (and your imagination when information is insufficient) to infer what is going on in the video,
-and then correct the transcriptions so that they look logical and make sense when viewed together.
-{f"I also want you to translate and provide your corrected transcriptions in {target_language}."if target_language is not None else ''}
-
-I splitted the video into many clips and I don't expect you to provide a transcription for all of them all at once.
-For now, you only need to correct the transcription for part of the clips.
-
-To give you some context,
-I will also provide you with the information of {len(context_pre)} clips before and {len(context_post)} clips after those you need to transcribe.
-
-Furthermore, I selected an arbitrary frame from each clip and used an image-to-text model to create a description of that frame.
-These descriptions will also be given to you so that you have access to "visual information" of the clips.
-However, the image-to-text model is also VERY inaccurate, so DO NOT rely on it too much.
-
-For your reference, here is a description of the image-to-text model:
-
-{self.captioner_description}
-
-Now, here are the information of the clips (0 indexed, indices correspond to the order in which the clips appear in the video):
+Now, here are the information of the clips
+(0 indexed, indices correspond to the order in which the clips appear in the video;
+an empty transcription means that the ASR model did not detect any speech in the corresponding clip):
 
 {clips_data_part}
 
-Please correct {"and translate " if target_language is not None else ''}the transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1}.
-Although there are likely to be multiple characters speaking, you DO NOT need to separate the speech of each speaker.
-Just provide the audio transcriptions of entire clips.
+For your reference, here is the description of the ASR model:
 
-Keep in mind that both the ASR model and the image-to-text model are VERY INACCURATE,
-and their ONLY job is to convert the video information into text which you can process.
-DO NOT rely on their outputs, as it is YOUR responsibility to understand the video.
-Please use logical reasoning and your imagination to infer (or imagine) what is ACTUALLY going on in the clips,
-and give me the audio transcriptions that seem most REASONABLE and PLAUSIBLE to you.
+{self.asr_description}
+
+Here is the description of the image-to-text model:
+
+{self.captioner_description}
 
 You may find the following background information about the video helpful:
 
 {video_background}
 
-Make sure to look for potential cases where special terms were not correctly identified by the ASR model,
-and address them properly.
+The ASR and image-to-text model are very inaccurate.
+Therefore, I need you to use logical reasoning (and your imagination when information is insufficient) to infer what is going on in the video,
+and then correct the transcriptions so that they look COHERENT and NATURAL, and ARE LOGICALLY CONNECTED.
+{f"I also want you to translate and provide your corrected transcriptions in {target_language}."if target_language is not None else ''}
 
-You should provide YOUR {"translated " if target_language is not None else ''}transcriptions for clip {len(context_pre)}-{len(context_pre) + len(targets) - 1} ONLY and NOTHING ELSE.
-DO NOT include ASR outputs, image-to-text outputs, or information about contextual clips.
+Although there are likely to be multiple characters speaking, you DO NOT need to separate the speech of each speaker.
+Just provide the combined audio transcriptions for each clip
+(however, you may use quotations to indicate the partitions between multiple speeches in a transcription).
+
+Make sure to look for potential cases where special terms were not correctly identified by the ASR model,
+and address them properly. You should look at the background information to know the special terms.
+
+Some keynotes:
+
+1. A transcription may contain no speech, incomplete / complete speech by one character, or combined speech of multiple characters.
+2. ASR and image-to-text models may have special quirks. Pay attention to their special behavior.
+3. The ASR model has no access to background information and may misrecognize special terms.
+If you see a phrase that look strange or does not fit into its context, there is a good chance that it's a misrecognized special terms.
+Sometimes ASR will recognize the presence of the special term, but will fail to spell it correctly.
+4. The clips may include multiple scenes. There may also be transition scenes.
+
+You should provide your revised {"translated " if target_language is not None else ''}transcriptions for all the clips.
+DO NOT include original ASR outputs or image-to-text outputs.
 However, please DO indicate the index of the clip that each of your transcriptions corresponds to.
+
+You should output transcriptions all the clips I ask you to transcribe even if there are many.
+
+Please make sure to address the special terms (especially character names) correctly.
+For example, if the video is a Doraemon episode and the ASR model outputs "どかえ保",
+there's a large probability that the correct transcription is ドラえもん
+(remember, the ASR model is likely to recognize syllables incorrectly and then further interpret them as incorrect words),
+and you should output that (or "哆啦A梦" if I ask you to translate into Chinese).
+YOU MUST CONVERT THE ASR OUTPUT INTO SYLLABLES, CORRECT THE INCORRECT SYLLABLES, AND INTERPRET THE SYLLABLES CORRECTLY.
+Also, take into account the specific behavior of the ASR & image-to-text models.
+
+Pay attention to the quirks of ASR and image-to-text model.
+
+Please make sure that your corrected transcriptions look NATURAL to native speakers, make LOGICAL sense and are plausible given the video's background information i provided to you.
+They should not look like human-unintelligible nonsense produced by low-quality machine translation service.
+If a transcription really does not fit into its context and you cannot infer the correct transcription,
+you should look at its context and use your imagination to write a transcription yourself, instead of keeping the transcription as-is.
+You should try to identify potential occurrences of special terms (especially character names) and spell and address them correctly according to the background information.
 
 Remember, you should {f"translate the transcriptions into {target_language}." if target_language is not None else "keep the transcriptions in their original language."}
 
-You should output transcriptions for all clips I ask you to transcribe even if there are many.
+Keep in mind that your priority is to provide LOGICALLY-CONNECTED transcriptions that LOOK NATURAL AND COHERENT TO NATIVE SPEAKERS, NOT TO TRY TO INTERPRET THE ASR OUTPUTS.
+In case you really cannot infer the correct transcription for a clip, you should look at its context and write a transcription by yourself.
 
-PLEASE MAKE SURE THAT YOUR CORRECTED TRANSCRIPTIONS LOOK NATURAL, MAKE LOGICAL SENSE AND ARE PLAUSIBLE GIVEN THE VIDEO'S BACKGROUND INFORMATION I PROVIDED TO YOU.
-THEY SHOULD NOT LOOK LIKE HUMAN-UNINTELLIGIBLE NONSENSE PRODUCED BY LOW-QUALITY MACHINE TRANSLATION SERVICE.
+Provide your revised transcriptions ONLY and NOTHING ELSE.
 """
-
 
     def _build_transcription_formatting_prompt(self, transcription_output: str, n_clips: int, target_language: str | None) -> str:
         """Builds the prompt used to be fed into an LLM and retrieve corrected, formatted transcriptions.
@@ -281,6 +309,10 @@ If the transcription of a clip is an empty string, you may either include it (se
 
 Notice that the clip indices MAY NOT be a list of contiguous numbers.
 
+Even if the LLM separated the transcriptions into speech of multiple speaker,
+DO NOT output the transcriptions of each speaker separately.
+Instead, OUTPUT THE COMBINED TRANSCRIPTION FOR EACH CLIP.
+
 Now, the LLM output I got is:
 
 {transcription_output}
@@ -291,6 +323,11 @@ f'''The LLM should have translated the transcriptions into {target_language}. Pl
 '''The LLM may have translated the transcriptions, but even if this is the case, please output the transcriptions in their ORIGINAL language.
 '''
 }
+
+If you think some transcriptions do not make sense (e.g., random UTF-8 emojis), you may try to correct them so that it looks natural and plausible,
+or simply omit them.
+
+{'' if target_language is None else f'If the LLM output is not in {target_language}, you should also translate the transcriptions into {target_language}.'}
 
 Please output the JSON-form transcriptions ONLY and NOTHING ELSE.
 
@@ -316,4 +353,6 @@ Then your output should be something like:
         "16": "",
         "110": "blah2\\n\\nblah2\\nblah2"
     }}
+
+Remember, the transcriptions in your output should be in {target_language if target_language is not None else "their original language"}.
 """

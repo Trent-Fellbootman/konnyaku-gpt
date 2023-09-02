@@ -1,14 +1,14 @@
 from typing import Sequence, Tuple
 import openai
 
-from .chat_llm import ChatCompletionService
+from .chat_completion import ChatCompletionService
 
 import logging
 
 
 class GPT35Turbo(ChatCompletionService):
 
-    def __init__(self, max_retry_count: int) -> None:
+    def __init__(self, max_retry_count: int=3) -> None:
         """Constructor.
 
         Args:
