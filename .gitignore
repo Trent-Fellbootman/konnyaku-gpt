@@ -16,3 +16,6 @@ test.*
 tmp
 tmp.*
 tmp[0-9].*
+
+*.srt
+tmp_workspace

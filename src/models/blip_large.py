@@ -3,6 +3,10 @@ from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 import torch
 
+import os
+
+
+os.environ['TOKENIZERS_PARALLELISM'] = 'true'
 
 class BlipLarge(ImageToTextModelService):
 

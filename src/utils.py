@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 from typing import Iterable, List, Collection, Dict, Any, Callable, Tuple
 from pathlib import Path
@@ -213,17 +214,16 @@ def describe_clips_screenshots(clips_dir: Path, captioner: ImageToTextModelServi
 def parse_video_clips(clips_dir: Path,
                       transcriber_instantiator: Callable[[], TranscriberModelService],
                       image_describer_instantiator: Callable[[], ImageToTextModelService],
-                      durations_file: Path,
                       transcriptions_file: Path,
                       screenshot_descriptions_file: Path,
                       save_every: int=10):
     # transcribe clips
-    print('Transcribing clips...')
+    logging.info('Transcribing clips...')
     transcriber = transcriber_instantiator()
     transcribe_clips(clips_dir, transcriber, transcriptions_file, save_every)
 
     # create screenshot descriptions for clips
-    print('Creating screenshot descriptions for clips...')
+    logging.info('Creating screenshot descriptions for clips...')
     captioner = image_describer_instantiator()
     describe_clips_screenshots(clips_dir, captioner, screenshot_descriptions_file, save_every)
 
@@ -247,8 +247,6 @@ def compile_video_for_llm(video_path: Path,
             2.mp4 - clip 2
             ...
             
-        clips_data.json - duration, audio transcription and screenshot description for each clip
-        durations.json: the durations of the clips
         transcriptions.json: the transcription of the clips
         captions.json: the captions of arbitrary screenshots fromthe clips
 
@@ -270,11 +268,11 @@ def compile_video_for_llm(video_path: Path,
             shutil.rmtree(clips_dir)
 
         # split video into clips
-        print(f'Splitting video: {video_path}')
+        logging.info(f'Splitting video: {video_path}')
         split_video(video_path, clips_dir, rtol=rtol)
-        print(f'Video clips saved to {clips_dir}.')
+        logging.info(f'Video clips saved to {clips_dir}.')
 
     # ASR & image captioning
     parse_video_clips(clips_dir, transcriber_instantiator, image_describer_instantiator,
-                      output_dir / 'durations.json', output_dir / 'transcriptions.json', output_dir / 'captions.json',
+                      output_dir / 'transcriptions.json', output_dir / 'captions.json',
                       save_every=save_every)

@@ -35,10 +35,10 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
                                video_background: str,
                                auxiliary_information: str,
                                target_language: str | None,
-                               min_target_clips_length: float,
+                               cache_path: Path | None,
+                               min_target_clips_length: float=40,
                                min_pre_context_length: float | None=None,
                                min_post_context_length: float | None=None,
-                               cache_filepath: Path | None=None,
                                group_completion_callback: Callable[[], None]=lambda *args, **kwargs: None) -> Sequence[str]:
         """Correct the transcriptions.
         
@@ -53,7 +53,7 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
             min_target_clips_length (float): The minimum length of the target clips in each batch.
             min_pre_context_length (float | None, optional): The minimum length of the pre-target context clips in each batch. "None" means 50% of `target_clips_length`. Defaults to None.
             min_post_context_length (float | None, optional): The minimum length of the post-target context clips in each batch. "None" means 50% of `target_clips_length`. Defaults to None.
-            cache_filepath (Path | None, optional): The transcription output filepath. "None" means no cache file. Defaults to None.
+            cache_path (Path | None, optional): The transcription output filepath. "None" means no cache file. Defaults to None.
                 If a cache file is specified, that file will be used to store the partial results when the corrector is paused.
             group_completion_callback (Callable[[], None], optional): A callback function to be called when each batch is completed.
 
@@ -110,11 +110,11 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
         assert sum(group[2] for group in groups) == len(clips_data)
         
         # see which groups have been processed and which have not
-        if cache_filepath is not None:
-            cache_filepath.touch()
+        if cache_path is not None:
+            cache_path.touch()
             
             try:
-                with open(cache_filepath, 'r') as f:
+                with open(cache_path, 'r') as f:
                     cached_transcriptions = json.load(f)
                 
                 # must be a dict
@@ -186,8 +186,8 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
             assert len(transcriptions[group_index]) == target_clips_count
 
             # save the transcriptions to cache file
-            if cache_filepath is not None:
-                with open(cache_filepath, 'w') as f:
+            if cache_path is not None:
+                with open(cache_path, 'w') as f:
                     json.dump(transcriptions, f, indent=4, ensure_ascii=False)
 
             unprocessed_groups.remove(group_index)

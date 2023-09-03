@@ -1,3 +1,4 @@
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import List, Sequence, Set, Any, Tuple, Dict
 
@@ -9,7 +10,7 @@ class ManyClipsTranscriptionCorrector(ABC):
     """
     
     @abstractmethod
-    def correct_transcriptions(self, clips_data: Sequence[ClipData], video_background: str, auxiliary_information: str, target_language: str | None, *args, **kwargs) -> Sequence[str]:
+    def correct_transcriptions(self, clips_data: Sequence[ClipData], video_background: str, auxiliary_information: str, target_language: str | None, cache_path: Path | None, *args, **kwargs) -> Sequence[str]:
         """Correct the transcriptions.
 
         Args:
@@ -17,6 +18,8 @@ class ManyClipsTranscriptionCorrector(ABC):
             video_background (str): The background information of the video that the clips come from.   
             auxiliary_information (str): Any auxiliary information like ASR & image-to-text model quirks.
             target_language (str | None): None if transcriptions should not be translated, the target language of translation otherwise.
+            cache_path (Path | None): The path to cache intermediate results.
+                Implementors of this base class may disregard this parameter but must include it in the parameter list.
 
         Returns:
             Sequence[str]: The corrected (and translated if should translate) transcriptions.

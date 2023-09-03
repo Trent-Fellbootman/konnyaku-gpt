@@ -1,3 +1,4 @@
+import logging
 import sys
 from typing import Collection, Dict, List, Any, Sequence
 import json
@@ -113,10 +114,10 @@ class TranscriptionCorrector:
                     transcriptions.append(result.get(i, None))
             else:
                 transcriptions += [None] * len(target_clips)
-                print(f'Error occurred when correcting transcriptions for clips [{current_start}, {current_start + len(target_clips)})', file=sys.stderr)
+                logging.error(f'Error occurred when correcting transcriptions for clips [{current_start}, {current_start + len(target_clips)})')
                 
             assert current_start + len(target_clips) == len(transcriptions)
-            print(f'\rFinished clips {current_start + len(target_clips)}/{len(clips_data)}')
+            logging.info(f'\rFinished clips {current_start + len(target_clips)}/{len(clips_data)}')
 
             current_start += len(target_clips)
             
