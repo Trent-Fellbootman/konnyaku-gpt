@@ -50,7 +50,7 @@ class SimpleCorrector(TranscriptionCorrector):
                 assert isinstance(transcriptions, Dict), "Unexpected JSON structure from extraction output!"
                 assert all(isinstance(val, str) for val in transcriptions.values()), "Unexpected JSON structure from extraction output!"
 
-                return [transcriptions.get(str(i), '') for i in range(clips_data)]
+                return [transcriptions.get(str(i), '') for i in range(len(clips_data))]
                 
             except Exception as e:
                 continue

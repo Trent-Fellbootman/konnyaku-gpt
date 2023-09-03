@@ -1,5 +1,6 @@
+import logging
 import json
-from typing import Sequence, List, Dict, Any, Tuple
+from typing import Sequence, List, Dict, Any, Tuple, Callable
 from pathlib import Path
 
 from src.data_models import ClipData
@@ -29,7 +30,16 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
         self.max_retry_count = max_retry_count
     
     # override
-    def correct_transcriptions(self, clips_data: Sequence[ClipData], video_background: str, auxiliary_information: str, target_language: str | None, min_target_clips_length: float, min_pre_context_length: float | None=None, min_post_context_length: float | None=None, cache_filepath: Path | None=None) -> Sequence[str]:
+    def correct_transcriptions(self,
+                               clips_data: Sequence[ClipData],
+                               video_background: str,
+                               auxiliary_information: str,
+                               target_language: str | None,
+                               min_target_clips_length: float,
+                               min_pre_context_length: float | None=None,
+                               min_post_context_length: float | None=None,
+                               cache_filepath: Path | None=None,
+                               group_completion_callback: Callable[[], None]=lambda *args, **kwargs: None) -> Sequence[str]:
         """Correct the transcriptions.
         
         In a batch, target clips are those whose corrected transcriptions will be actually used;
@@ -45,10 +55,17 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
             min_post_context_length (float | None, optional): The minimum length of the post-target context clips in each batch. "None" means 50% of `target_clips_length`. Defaults to None.
             cache_filepath (Path | None, optional): The transcription output filepath. "None" means no cache file. Defaults to None.
                 If a cache file is specified, that file will be used to store the partial results when the corrector is paused.
+            group_completion_callback (Callable[[], None], optional): A callback function to be called when each batch is completed.
 
         Returns:
             Sequence[str]: The corrected transcriptions.
         """
+
+        if min_pre_context_length is None:
+            min_pre_context_length = min_target_clips_length * 0.5
+        
+        if min_post_context_length is None:
+            min_post_context_length = min_target_clips_length * 0.5
         
         # compile clip groups
         current_start = 0
@@ -85,44 +102,50 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
             
             # create group
             groups.append((current_start - len(context_pre), len(context_pre), len(target_clips), len(context_post)))
-            assert groups[0] + len(context_pre) == current_start
+            assert groups[-1][0] + len(context_pre) == current_start
                 
             current_start += len(target_clips)
-            assert groups[0] + len(context_pre) + len(target_clips) == current_start
+            assert groups[-1][0] + len(context_pre) + len(target_clips) == current_start
 
         assert sum(group[2] for group in groups) == len(clips_data)
         
         # see which groups have been processed and which have not
-        cache_filepath.touch()
-        
-        try:
-            with open(cache_filepath, 'r') as f:
-                cached_transcriptions = json.load(f.read())
+        if cache_filepath is not None:
+            cache_filepath.touch()
             
-            # must be a dict
-            assert isinstance(cached_transcriptions, Dict)
-            # keys must be subset of all possible group indices
-            assert set(int(key) for key in cached_transcriptions.keys()).issubset(range(len(groups)))
-            
-            for key, value in cached_transcriptions.items():
-                # transcriptions for a group must be a list
-                assert isinstance(value, List)
-                # each transcription must be a str
-                assert all(isinstance(t, str) for t in value)
-                # number of transcriptions must equal that of the target clips in that group
-                assert len(value) == groups[int(key)][2]
-            
-            transcriptions = {int(key): value for key, value in cached_transcriptions.items()}
+            try:
+                with open(cache_filepath, 'r') as f:
+                    cached_transcriptions = json.load(f)
                 
-        except Exception:
-            # if any error is found in the cache, invalidate it.
-            # {group index: {transcriptions of target clips in that group}}
+                # must be a dict
+                assert isinstance(cached_transcriptions, Dict)
+                # keys must be subset of all possible group indices
+                assert set(int(key) for key in cached_transcriptions.keys()).issubset(range(len(groups)))
+                
+                for key, value in cached_transcriptions.items():
+                    # transcriptions for a group must be a list
+                    assert isinstance(value, List)
+                    # each transcription must be a str
+                    assert all(isinstance(t, str) for t in value)
+                    # number of transcriptions must equal that of the target clips in that group
+                    assert len(value) == groups[int(key)][2]
+                
+                transcriptions = {int(key): value for key, value in cached_transcriptions.items()}
+                    
+            except Exception as e:
+                # if any error is found in the cache, invalidate it.
+                # {group index: {transcriptions of target clips in that group}}
+                transcriptions: Dict[int, List[str]] = {}
+        else:
             transcriptions: Dict[int, List[str]] = {}
         
         # correct transcriptions
         unprocessed_groups = set(range(len(groups))).difference(transcriptions.keys())
 
+        total_unprocessed_groups = len(unprocessed_groups)
+
         while len(unprocessed_groups) > 0:
+            logging.info(f'{len(unprocessed_groups)}/{total_unprocessed_groups} groups remaining')
             # get group to be processed
             group_index = next(iter(unprocessed_groups))
             group = groups[group_index]
@@ -137,7 +160,7 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
 
             # correct the clips
             corrected_transcriptions = None
-            for _ in self.max_retry_count:
+            for _ in range(self.max_retry_count):
                 try:
                     corrected_transcriptions = self.group_corrector.correct_transcriptions(
                         clips_data=list(pre_context_clips) + list(target_clips) + list(post_context_clips),
@@ -153,18 +176,24 @@ class ManyClipsBatchedCorrector(ManyClipsTranscriptionCorrector):
                 # failure, skip these clips
                 # TODO: caching behavior? doing this would make these clips never be tried again!
                 transcriptions[group_index] = [''] * target_clips_count
-                pass
+                
+                logging.warning(f'Max retry count reached; group {group_index} skipped.')
             else:
                 # success, add corrected transcriptions to transcriptions
-                transcriptions[group_index] = corrected_transcriptions
+                transcriptions[group_index] = corrected_transcriptions[context_pre_clip_count:context_pre_clip_count + target_clips_count]
+                logging.info(f'Group {group_index} corrected successfully.')
             
             assert len(transcriptions[group_index]) == target_clips_count
 
             # save the transcriptions to cache file
-            with open(cache_filepath, 'w') as f:
-                json.dump(transcriptions, f, indent=4, ensure_ascii=False)
+            if cache_filepath is not None:
+                with open(cache_filepath, 'w') as f:
+                    json.dump(transcriptions, f, indent=4, ensure_ascii=False)
 
             unprocessed_groups.remove(group_index)
+            
+            # call callback
+            group_completion_callback()
 
         # combine the trancriptions from each group
         combined_transcriptions = []

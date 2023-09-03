@@ -1,0 +1,2 @@
+from .many_clips_transcription_corrector import ManyClipsTranscriptionCorrector
+from .many_clips_batched_corrector import ManyClipsBatchedCorrector

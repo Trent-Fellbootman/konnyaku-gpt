@@ -205,7 +205,7 @@ Remember, the transcriptions in your output should be in {target_language if tar
                 assert isinstance(parsed_transcriptions, Dict), "Unexpected JSON structure from extraction output!"
                 assert all(isinstance(val, str) for val in parsed_transcriptions.values()), "Unexpected JSON structure from extraction output!"
 
-                return [parsed_transcriptions.get(str(i), '') for i in range(clips_data)]
+                return [parsed_transcriptions.get(str(i), '') for i in range(len(clips_data))]
 
             except Exception as e:
                 continue
