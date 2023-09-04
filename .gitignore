@@ -4,7 +4,6 @@
 *.mp3
 *.wav
 *.flac
-*.png
 *.jpg
 *.jpeg
 
@@ -18,4 +17,4 @@ tmp.*
 tmp[0-9].*
 
 *.srt
-tmp_workspace
+*_workspace

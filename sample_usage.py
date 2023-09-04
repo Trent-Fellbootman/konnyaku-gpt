@@ -1,62 +1,13 @@
-import logging
-logging.basicConfig(level=logging.INFO)
-
-import json
 from pathlib import Path
-from typing import List, Tuple, Any, Dict
-from pprint import pprint
 
-from src.data_models import ClipData, ClipSetMetadata
-from src.many_clips_transcription_correction import ManyClipsBatchedCorrector
-from src.transcription_correction import MultiRoundCorrector, SimpleCorrector
+from src.subtitle_generation import DefaultGenerator
 
-from src.models.gpt.openai_gpt_server import OpenAiGptServer
-from src.models.gpt.gpt_35_turbo import GPT35Turbo
-from src.models.gpt.gpt4 import GPT4
-
-from src.models.dummy_chat_completion_service import DummyChatCompletionService as FakeGPT
+generator = DefaultGenerator(quality_preset='low')
 
 
-data_path = Path('./episode-15-data')
-
-with open(data_path / 'captions.json', 'r') as f:
-    captions = json.loads(f.read())
-
-with open(data_path / 'transcriptions.json', 'r') as f:
-    transcriptions = json.loads(f.read())
-
-with open('episode-15-data/clips/metadata.json', 'r') as f:
-    durations = [item.duration for item in ClipSetMetadata.from_json(f.read()).clips_metadata]
-
-assert len(durations) == len(transcriptions) == len(captions)
-
-data = list(zip(durations, transcriptions, captions))
-
-clips_data = [ClipData(duration, [transcription], caption) for duration, transcription, caption in data]
-
-gpt_server = OpenAiGptServer()
-gpt_35_16k = GPT35Turbo(gpt_server, context_length='16k')
-gpt_4 = GPT4(gpt_server, context_length='8k')
-
-corrector = ManyClipsBatchedCorrector(
-    group_corrector=SimpleCorrector(
-        gpt_4,
-        gpt_35_16k
-    ),
-    max_retry_count=1
-)
-
-current_total_cost = 0
-
-def callback():
-    global current_total_cost
-    logging.info(f'Cost on this group: ${gpt_server.money_spent["total"] - current_total_cost: .2e}')
-    current_total_cost = gpt_server.money_spent["total"]
-    logging.info(f'Cumulative cost: ${current_total_cost: .2e}')
-
-corrected_transcriptions = corrector.correct_transcriptions(
-    clips_data=clips_data,
-    video_background=\
+generator.generate_subtitles(video_path=Path('/home/trent/Downloads/episode.mp4'),
+                             output_path=Path('test-gpt-3.5-turbo.srt'),
+                             video_background=\
 """The video consists of two episodes from the Japanese anime Chimpui.
 The title of the first episode is "ワンダユウは占い師？"; the title of the second episode is "エリさまは美少女".
 There is an introductory screen at the start of each episode, where the title of that episode is shouted out.
@@ -84,47 +35,5 @@ B. Others:
     2. Kahou (科法 / かほう). "科法" is the special, advanced and convenient-to-use technologies from the Mahl planet.
     Chinpui and Wanda both uses Kahou.
 """,
-    auxiliary_information=\
-"""The speech recognition model used to produce the original transcriptions is named "Whisper".
-It is an ASR model for Japanese transcription.
-The model should not be assumed to have world knowledge, and its outputs are likely to be very inaccurate.
-Problems in its outputs may include but are not limited to:
-
-1. Incorrect recognition of kanas, e.g., recognizing "ぶ" as "ぷ".
-2. Failure to identify prolonged kanas, e.g., recognizing "えい" as "え".
-3. Incorrect semantics. These include recognizing hiraganas as katakanas and vice versa,
-4. Failure to address special terms properly.
-5. SPECIAL PROBLEM: the model occasionally produces non-Japanese output, like English, Korean, and even utf-8 stickers.
-6. SPECIAL PROBLEM: the model may incorrectly output something like "ご視聴ありがとうございました" when there is actually no speech.
-PAY EXTRA ATTENTION WHEN SEEING "ご視聴ありがとうございました" BECAUSE THERE IS LIKELY TO BE NO SPEECH AT ALL.
-
-translating kanas to wrong Kanjis, incorrect semantic grouping & punctuation (e.g., "はい、そうです。" v.s. "配送です。"), etc.
-
-The model used to produce frame descriptions is named "blip-image-captioning-large".
-Its output is likely to be very inaccurate.
-Possible problems include but are not limited to:
-
-1. Incomplete description of images. This include failure to detect certain objects (especially when the object is small),
-and lack of detailed object descriptions (e.g., "a dog" v.s. "a large, brown dog with collars on its neck").
-2. Recignizing one object as something else, e.g., seeing an elliptic spaceship as a ball.
-These problems are especially prominent when the input image is not a photograph.
-3. Human-specific problems: The model often fail to identify the age and gender of a person correctly.
-For example, when the model says there is "a man", it may actually be a girl who is still in primary school.
-These problems are especially prominent when the input image is not a photograph.
-4. Incorrect identification of image style. E.g., a photo might be recognized as a painting, and vice versa.
-
-Test results show that the model performs well on photos only; very inaccurate results are seen when the model is fed with anime screenshots.
-""",
-    target_language="Simplified Chinese",
-    min_target_clips_length=40,
-    min_pre_context_length=10,
-    min_post_context_length=10,
-    cache_filepath=Path('gpt4-cache.json'),
-    group_completion_callback=callback
-)
-
-output_filepath = Path('episode-15-transcriptions-gpt4-simple.json')
-output_filepath.touch()
-
-with open(output_filepath, 'w') as f:
-    json.dump(corrected_transcriptions, f, indent=4, ensure_ascii=False)
+                             target_language='simplified Chinese',
+                             workspace_path=Path('test_workspace'))
