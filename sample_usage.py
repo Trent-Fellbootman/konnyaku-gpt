@@ -2,14 +2,14 @@ from pathlib import Path
 
 from src.subtitle_generation import DefaultGenerator
 
-generator = DefaultGenerator(quality_preset='low')
+generator = DefaultGenerator(quality_preset='medium')
 
 
-generator.generate_subtitles(video_path=Path('/home/trent/Downloads/episode.mp4'),
-                             output_path=Path('test-gpt-3.5-turbo.srt'),
+generator.generate_subtitles(video_path=Path('/home/trent/Downloads/final-episode.mp4'),
+                             output_path=Path('final-episode.srt'),
                              video_background=\
 """The video consists of two episodes from the Japanese anime Chimpui.
-The title of the first episode is "ワンダユウは占い師？"; the title of the second episode is "エリさまは美少女".
+The title of the first episode is "レッツゴー銀河レース"; the title of the second episode is "はじめまして、ルルロフです".
 There is an introductory screen at the start of each episode, where the title of that episode is shouted out.
 
 Some special terms in Chimpui:
@@ -36,4 +36,4 @@ B. Others:
     Chinpui and Wanda both uses Kahou.
 """,
                              target_language='simplified Chinese',
-                             workspace_path=Path('test_workspace'))
+                             workspace_path=Path('final-episode-workspace'))

@@ -166,10 +166,15 @@ def transcribe_clips(clips_dir: Path, transcriber: TranscriberModelService, outp
         if i < len(transcriptions):
             continue
         
-        with VideoFileClip(str(clips_dir / clip_path)) as clip:
-            clip.audio.write_audiofile(str(TMP_AUDIO_PATH))
-            
-        text = transcriber(TMP_AUDIO_PATH)
+        try:
+            with VideoFileClip(str(clips_dir / clip_path)) as clip:
+                clip.audio.write_audiofile(str(TMP_AUDIO_PATH))
+                
+            text = transcriber(TMP_AUDIO_PATH)
+        except Exception as e:
+            logging.warning(f'Failed to transcribe clip {i}: {e}; setting transcription to empty string. Clip duration: {clip.duration}.')
+            text = ''
+
         transcriptions.append(text)
         progress.set_description(f'clip {i + 1}/{len(clip_paths)}: {text}')
         
