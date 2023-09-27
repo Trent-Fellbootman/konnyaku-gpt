@@ -18,3 +18,8 @@ tmp[0-9].*
 
 *.srt
 *_workspace
+
+# build artifacts
+dist/
+
+.vscode/

@@ -23,6 +23,14 @@ Here's a screenshot of an episode from the Japanese anime Chimpui, with translat
 
 KonnyakuGPT not only addressed and translated the character's name (Japanese: "エリ" / English: "Eri"/ Chinese: "惠理") correctly, but also identified a special object in the scene and inferred its functionality (there is an "imagination gun" in the scene which shoots special rays that inject particular thoughts into creatures, with its effects lasting for 24 hours).
 
+## Installation
+
+KonnyakuGPT can be installed via pip:
+
+```bash
+pip install konnyaku-gpt
+```
+
 ## Sample Usage
 
 To create subtitles with predefnied methods, just import the default subtitle generator,
@@ -41,21 +49,36 @@ set OPENAI_API_KEY=<your-api-key>
 python <a-script-that-invokes-KonnyakuGPT>
 ```
 
+**For Chinese users**: As there are known issues with certain internet access within China,
+you will likely need a proxy server to use Open AI services.
+To set up proxy for KonnyakuGPT, simply specify the proxy server address and port via environment variables, e.g.:
+
+```bash
+# run this line if you are on a Unix-like OS
+export ALL_PROXY=127.0.0.1:<your-proxy-port>
+# run this line if you are on Windows
+set ALL_PROXY=127.0.0.1:<your-proxy-port>
+```
+
 Here is an example script that generates subtitles for an episode in the anime Chimpui by Fujiko F. Fujio:
 
 ```Python
 from pathlib import Path
 
-from src.subtitle_generation import DefaultGenerator
+from konnyaku_gpt.subtitle_generation import DefaultGenerator
+from konnyaku_gpt.tricks import simple_split_subtitle_file
 
+# It is recommended to use the 'medium' preset for a balance between quality and cost
 generator = DefaultGenerator(quality_preset='medium')
 
+output_path = Path('/output/srt/path')
 
-generator.generate_subtitles(video_path=Path('/home/trent/Downloads/episode.mp4'),
-                            output_path=Path('test.srt'),
-                            video_background=\
+# Generate the subtitles with AI!
+generator.generate_subtitles(video_path=Path('/path/to/Chimpui/episode/mp4'),
+                             output_path=output_path,
+                             video_background=\
 """The video consists of two episodes from the Japanese anime Chimpui.
-The title of the first episode is "ワンダユウは占い師？"; the title of the second episode is "エリさまは美少女".
+The title of the first episode is "レッツゴー銀河レース"; the title of the second episode is "はじめまして、ルルロフです".
 There is an introductory screen at the start of each episode, where the title of that episode is shouted out.
 
 Some special terms in Chimpui:
@@ -81,7 +104,12 @@ B. Others:
     2. Kahou (科法 / かほう). "科法" is the special, advanced and convenient-to-use technologies from the Mahl planet.
     Chinpui and Wanda both uses Kahou.
 """,
-                            target_language='English')
+                             target_language='simplified Chinese',
+                             workspace_path=Path('final-episode-workspace'))
+
+# split the subtitles so that each subtitle element is short
+simple_split_subtitle_file(output_path)
+
 ```
 
 ## Homage

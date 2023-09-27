@@ -3,7 +3,7 @@ import json
 from typing import Sequence, List, Dict, Any, Tuple, Callable
 from pathlib import Path
 
-from src.data_models import ClipData
+from ..data_models import ClipData
 from .many_clips_transcription_corrector import ManyClipsTranscriptionCorrector
 from ..transcription_correction.transcription_corrector import TranscriptionCorrector
 

@@ -1,12 +1,15 @@
 from pathlib import Path
 
-from src.subtitle_generation import DefaultGenerator
+from konnyaku_gpt.subtitle_generation import DefaultGenerator
+from konnyaku_gpt.tricks import simple_split_subtitle_file
 
 generator = DefaultGenerator(quality_preset='medium')
 
+output_path = Path('test.srt')
 
-generator.generate_subtitles(video_path=Path('/home/trent/Downloads/final-episode.mp4'),
-                             output_path=Path('final-episode.srt'),
+# Generate the subtitles with AI!
+generator.generate_subtitles(video_path=Path('/home/trent/Downloads/test.mp4'),
+                             output_path=output_path,
                              video_background=\
 """The video consists of two episodes from the Japanese anime Chimpui.
 The title of the first episode is "レッツゴー銀河レース"; the title of the second episode is "はじめまして、ルルロフです".
@@ -37,3 +40,6 @@ B. Others:
 """,
                              target_language='simplified Chinese',
                              workspace_path=Path('final-episode-workspace'))
+
+# split the subtitles so that each subtitle element is short
+simple_split_subtitle_file(output_path)

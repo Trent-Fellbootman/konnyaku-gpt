@@ -1,6 +1,6 @@
 import json
 from typing import Sequence, Dict, List, Any, Tuple
-from src.data_models import ClipData
+from ..data_models import ClipData
 from .transcription_corrector import TranscriptionCorrector
 from ..models.chat_completion import ChatCompletionService
 
