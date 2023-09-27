@@ -31,10 +31,9 @@ KonnyakuGPT can be installed via pip:
 pip install konnyaku-gpt
 ```
 
-## Sample Usage
+## Configuration & Usage
 
-To create subtitles with predefnied methods, just import the default subtitle generator,
-input background information, and invoke the generator.
+### Open AI setup
 
 **KonnyakuGPT uses Open AI's API services; you must configure the API key before invoking the subtitle generator.**
 The easiest way to do so is to set the environment variable "OPEN_AI_API_KEY" before running the Python script that generates subtitles.
@@ -49,16 +48,10 @@ set OPENAI_API_KEY=<your-api-key>
 python <a-script-that-invokes-KonnyakuGPT>
 ```
 
-**For Chinese users**: As there are known issues with certain internet access within China,
-you will likely need a proxy server to use Open AI services.
-To set up proxy for KonnyakuGPT, simply specify the proxy server address and port via environment variables, e.g.:
+### Usage
 
-```bash
-# run this line if you are on a Unix-like OS
-export ALL_PROXY=127.0.0.1:<your-proxy-port>
-# run this line if you are on Windows
-set ALL_PROXY=127.0.0.1:<your-proxy-port>
-```
+To create subtitles with predefnied methods, just import the default subtitle generator,
+input background information, and invoke the generator.
 
 Here is an example script that generates subtitles for an episode in the anime Chimpui by Fujiko F. Fujio:
 
@@ -104,12 +97,44 @@ B. Others:
     2. Kahou (科法 / かほう). "科法" is the special, advanced and convenient-to-use technologies from the Mahl planet.
     Chinpui and Wanda both uses Kahou.
 """,
-                             target_language='simplified Chinese',
+                             target_language='English',
                              workspace_path=Path('final-episode-workspace'))
 
 # split the subtitles so that each subtitle element is short
 simple_split_subtitle_file(output_path)
 
+```
+
+## Troubleshooting
+
+### Special Notice For Chinese Users
+
+As there are known issues with certain internet access within China,
+you will likely need a proxy server to use Open AI services.
+To set up proxy for KonnyakuGPT, simply specify the proxy server address and port via environment variables in the console which will run KonnyakuGPT, e.g.:
+
+```bash
+# run this line if you are on a Unix-like OS
+export ALL_PROXY=127.0.0.1:<your-proxy-port>
+# run this line if you are on Windows
+set ALL_PROXY=127.0.0.1:<your-proxy-port>
+```
+
+### CUDA Setup
+
+KonnyakuGPT invokes locally deployed deep learning models when generating subtitles.
+By default, it will try to put the model on GPU if you have a CUDA-compatible graphics card.
+**However, if the VRAM of your GPU is less than 8GB,
+the models may not fit into your VRAM and an error may be raised.**
+
+In this case, you need to tell KonnyakuGPT not to use CUDA,
+and the easiest way to do so is to mask your GPU via environment variables, i.e.:
+
+```bash
+# run this line if you are on a Unix-like OS
+export CUDA_VISIBLE_DEVICES=''
+# run this line if you are on Windows
+set CUDA_VISIBLE_DEVICES=''
 ```
 
 ## Homage
