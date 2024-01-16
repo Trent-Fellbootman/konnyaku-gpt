@@ -1,28 +1,33 @@
 from pathlib import Path
 from .transcriber import TranscriberModelService
-import openai
+from openai import OpenAI
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 import logging
 
 
 class WhisperCloud(TranscriberModelService):
+    
+    def __init__(self) -> None:
+        self.client = OpenAI()
+        
     def call(self, audio_path: Path) -> str:
         if AudioFileClip(audio_path).duration < 0.2:
             # return empty string if audio is too short
             return ''
         
         with open(audio_path, 'rb') as f:
-            response = openai.Audio.transcribe('whisper-1', f, language='ja', return_timestamps=True)
+            response = self.client.audio.transcriptions.create(
+                model='whisper-1',
+                file=f,
+            )
         
-        ret = response['text']
-        
-        return ret
+        return response.text
     
     @staticmethod
     def get_description() -> str:
         return \
 """
-This model named "Whisper" is an ASR model for Japanese transcription.
+This model named "Whisper" is an ASR model for transcription.
 The model should not be assumed to have world knowledge, and its outputs are likely to be very inaccurate.
 Problems in its outputs may include but are not limited to:
 

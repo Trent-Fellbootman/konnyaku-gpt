@@ -1,4 +1,5 @@
-import openai
+from openai import OpenAI
+from openai.types.chat import ChatCompletion
 
 from typing import Sequence, Tuple, Dict
 import logging
@@ -17,17 +18,22 @@ class OpenAiGptServer:
     def __init__(self):
         # {model name: input tokens used, output tokens used}
         self.token_usages = {name: (0, 0) for name in self.price_info.keys()}
+        self.client = OpenAI()
     
     
     def invoke(self, model_name: str, messages: Sequence[Tuple[str, bool]]) -> str:
-        response = openai.ChatCompletion.create(
-            model=model_name,
-            messages=[
-                {"role": "user" if is_user else "assistant", "content": message}
-                for message, is_user in messages
-            ]
-        )
+        messages = [
+            {"role": "user" if is_user else "assistant", "content": message}
+            for message, is_user in messages
+        ]
         
+        logging.info(f'Invoking {model_name} with the following messages:\n\n{messages}')
+        
+        response = self.client.chat.completions.create(
+            model=model_name,
+            messages=messages
+        )
+
         self._update_records(model_name, response)
         
         money_spent = self.calc_money_spent(model_name, response)
@@ -35,7 +41,7 @@ class OpenAiGptServer:
 
         logging.info(f'{model_name} costs ${money_spent: .2e} on this invocation; cumulative total cost from all models: ${total_money_spent: .2e}')
         
-        stop_reason = response['choices'][0]['finish_reason']
+        stop_reason = response.choices[0].finish_reason
         if stop_reason != 'stop':
             message_length = sum(len(message) for message, _ in messages)
             error_message = f'Text generation by {model_name} stopped abnormally! Stop reason: {stop_reason}; total input messages length: {message_length}'
@@ -44,7 +50,7 @@ class OpenAiGptServer:
             
             raise Exception(error_message)
         else:
-            result = response['choices'][0]['message']['content']
+            result = response.choices[0].message.content
             logging.debug(f'Response from {model_name}:\n<response-start>\n{result}\n<response-end>')
 
             return result
@@ -67,20 +73,20 @@ class OpenAiGptServer:
 
         return money_spent_by_model
     
-    def calc_money_spent(self, model_name: str, response: Dict) -> float:
-        token_usage = response['usage']
+    def calc_money_spent(self, model_name: str, response: ChatCompletion) -> float:
+        token_usage = response.usage
         completion_tokens, prompt_tokens = (
-            token_usage['completion_tokens'],
-            token_usage['prompt_tokens']
+            token_usage.completion_tokens,
+            token_usage.prompt_tokens
         )
         
         return self.price_info[model_name][0] * prompt_tokens / 1000 + self.price_info[model_name][1] * completion_tokens / 1000
             
-    def _update_records(self, model_name: str, response: Dict) -> None:
-        token_usage = response['usage']
+    def _update_records(self, model_name: str, response: ChatCompletion) -> None:
+        token_usage = response.usage
         completion_tokens, prompt_tokens = (
-            token_usage['completion_tokens'],
-            token_usage['prompt_tokens']
+            token_usage.completion_tokens,
+            token_usage.prompt_tokens
         )
         
         current_total_input_tokens, current_total_output_tokens = self.token_usages[model_name]

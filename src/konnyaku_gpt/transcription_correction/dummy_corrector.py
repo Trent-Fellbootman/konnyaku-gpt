@@ -3,10 +3,6 @@ from ..data_models import ClipData
 from .transcription_corrector import TranscriptionCorrector
 import time
 
-import logging
-
-logging.basicConfig(level=logging.INFO)
-
 from numpy import random
 
 
